@@ -1,0 +1,1 @@
+import{D as o,n as p}from"./index-D4lHRjEd.js";function d({children:s,className:a,blur:r="2xl",...l}){const x=r==="3xl"?"backdrop-blur-3xl":r==="xl"?"backdrop-blur-xl":"backdrop-blur-2xl";return o.jsx("div",{className:p("bg-[var(--bg)]/30 rounded-3xl p-5 sm:p-6 shadow-[0_8px_48px_rgba(0,0,0,0.08)]",x,a),...l,children:s})}export{d as G};

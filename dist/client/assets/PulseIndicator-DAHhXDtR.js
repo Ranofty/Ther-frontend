@@ -1,0 +1,1 @@
+import{D as e}from"./index-D4lHRjEd.js";function s(){return e.jsxs("span",{className:"relative inline-flex w-2 h-2",children:[e.jsx("span",{className:"absolute inset-0 rounded-full bg-[var(--green)] animate-ping opacity-60"}),e.jsx("span",{className:"relative rounded-full w-2 h-2 bg-[var(--green)]"})]})}export{s as P};
