@@ -1,4 +1,4 @@
-import server from "../../src/server";
+import server from "../../dist/server/server.js";
 
 export default async function (request: Request, context: any) {
   const url = new URL(request.url);
