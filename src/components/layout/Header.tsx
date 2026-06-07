@@ -1,16 +1,17 @@
 import { useState } from "react";
 import { Link, useLocation } from "@tanstack/react-router";
 import { motion, AnimatePresence } from "framer-motion";
-import { Compass, Layers, Plus, BookOpen, Moon, Sun, User, Menu, X } from "lucide-react";
+import { Compass, Plus, BookOpen, Moon, Sun, User, Menu, X, Trophy } from "lucide-react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { useThemeStore } from "@/store/useThemeStore";
 import { ClientOnly } from "./ClientOnly";
+import { NotificationBell } from "./NotificationBell";
 import { cn } from "@/lib/utils";
 
 const NAV = [
   { to: "/", icon: Compass, label: "Discover" },
-  { to: "/dashboard", icon: Layers, label: "Dashboard" },
+  { to: "/leaderboard", icon: Trophy, label: "Leaderboard" },
   { to: "/create", icon: Plus, label: "Create" },
   { to: "/docs", icon: BookOpen, label: "Docs" },
 ] as const;
@@ -144,6 +145,10 @@ export function Header() {
         >
           {isDark ? <Sun size={18} /> : <Moon size={18} />}
         </button>
+
+        <ClientOnly>
+          <NotificationBell />
+        </ClientOnly>
 
         <ClientOnly fallback={<div className="h-10 w-[120px] rounded-full bg-[var(--surface-2)] animate-pulse" />}>
           <WalletMultiButton />

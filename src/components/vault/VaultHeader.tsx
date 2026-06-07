@@ -4,6 +4,7 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { BadgeTag } from "@/components/ui/BadgeTag";
 import { formatNumber, timeAgo } from "@/lib/utils";
 import { UserLink } from "@/components/ui/UserLink";
+import { ShareButton } from "./ShareButton";
 
 export function VaultHeader({ vault }: { vault: Vault }) {
   return (
@@ -47,6 +48,7 @@ export function VaultHeader({ vault }: { vault: Vault }) {
                 <Globe size={18} />
               </a>
             )}
+            <ShareButton vault={{ id: vault.id, vault_name: vault.name }} />
           </div>
           <p className="text-sm font-mono text-[var(--text-muted)] mt-2 max-w-2xl">
             {vault.description}
