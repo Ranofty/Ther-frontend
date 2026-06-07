@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as LeaderboardRouteImport } from './routes/leaderboard'
 import { Route as DocsRouteImport } from './routes/docs'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as CreateRouteImport } from './routes/create'
@@ -16,6 +17,11 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as VaultIdRouteImport } from './routes/vault.$id'
 import { Route as ProfileWalletRouteImport } from './routes/profile.$wallet'
 
+const LeaderboardRoute = LeaderboardRouteImport.update({
+  id: '/leaderboard',
+  path: '/leaderboard',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DocsRoute = DocsRouteImport.update({
   id: '/docs',
   path: '/docs',
@@ -52,6 +58,7 @@ export interface FileRoutesByFullPath {
   '/create': typeof CreateRoute
   '/dashboard': typeof DashboardRoute
   '/docs': typeof DocsRoute
+  '/leaderboard': typeof LeaderboardRoute
   '/profile/$wallet': typeof ProfileWalletRoute
   '/vault/$id': typeof VaultIdRoute
 }
@@ -60,6 +67,7 @@ export interface FileRoutesByTo {
   '/create': typeof CreateRoute
   '/dashboard': typeof DashboardRoute
   '/docs': typeof DocsRoute
+  '/leaderboard': typeof LeaderboardRoute
   '/profile/$wallet': typeof ProfileWalletRoute
   '/vault/$id': typeof VaultIdRoute
 }
@@ -69,6 +77,7 @@ export interface FileRoutesById {
   '/create': typeof CreateRoute
   '/dashboard': typeof DashboardRoute
   '/docs': typeof DocsRoute
+  '/leaderboard': typeof LeaderboardRoute
   '/profile/$wallet': typeof ProfileWalletRoute
   '/vault/$id': typeof VaultIdRoute
 }
@@ -79,6 +88,7 @@ export interface FileRouteTypes {
     | '/create'
     | '/dashboard'
     | '/docs'
+    | '/leaderboard'
     | '/profile/$wallet'
     | '/vault/$id'
   fileRoutesByTo: FileRoutesByTo
@@ -87,6 +97,7 @@ export interface FileRouteTypes {
     | '/create'
     | '/dashboard'
     | '/docs'
+    | '/leaderboard'
     | '/profile/$wallet'
     | '/vault/$id'
   id:
@@ -95,6 +106,7 @@ export interface FileRouteTypes {
     | '/create'
     | '/dashboard'
     | '/docs'
+    | '/leaderboard'
     | '/profile/$wallet'
     | '/vault/$id'
   fileRoutesById: FileRoutesById
@@ -104,12 +116,20 @@ export interface RootRouteChildren {
   CreateRoute: typeof CreateRoute
   DashboardRoute: typeof DashboardRoute
   DocsRoute: typeof DocsRoute
+  LeaderboardRoute: typeof LeaderboardRoute
   ProfileWalletRoute: typeof ProfileWalletRoute
   VaultIdRoute: typeof VaultIdRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/leaderboard': {
+      id: '/leaderboard'
+      path: '/leaderboard'
+      fullPath: '/leaderboard'
+      preLoaderRoute: typeof LeaderboardRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/docs': {
       id: '/docs'
       path: '/docs'
@@ -160,6 +180,7 @@ const rootRouteChildren: RootRouteChildren = {
   CreateRoute: CreateRoute,
   DashboardRoute: DashboardRoute,
   DocsRoute: DocsRoute,
+  LeaderboardRoute: LeaderboardRoute,
   ProfileWalletRoute: ProfileWalletRoute,
   VaultIdRoute: VaultIdRoute,
 }

@@ -84,3 +84,29 @@ export function getRevenueSharePDA(vault: PublicKey, recipient: PublicKey): [Pub
     PROGRAM_ID
   );
 }
+
+/**
+ * Derive Referral PDA
+ */
+export function getReferralPDA(user: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("referral"), user.toBuffer()],
+    PROGRAM_ID
+  );
+}
+
+// --- Launchpad Integration (mainnet-only) ---
+export const PUMPPORTAL_TRADE_API = "https://pumpportal.fun/api/trade-local";
+export const PUMPFUN_IPFS_API = "https://pump.fun/api/ipfs";
+export const BAGS_FM_PROXY = "/api/bags-launch";
+
+export const JITO_ENDPOINTS = [
+  "https://mainnet.block-engine.jito.wtf",
+  "https://amsterdam.mainnet.block-engine.jito.wtf",
+  "https://frankfurt.mainnet.block-engine.jito.wtf",
+  "https://london.mainnet.block-engine.jito.wtf",
+  "https://ny.mainnet.block-engine.jito.wtf",
+  "https://tokyo.mainnet.block-engine.jito.wtf",
+];
+
+export const IS_MAINNET = NETWORK === "mainnet-beta";

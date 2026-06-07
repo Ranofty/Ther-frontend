@@ -11,10 +11,12 @@ import {
   getVaultPDA,
   getVaultTokenPDA,
   getRevenueSharePDA,
+  getReferralPDA,
   PROGRAM_ID,
   connection,
 } from "@/lib/solana";
 import { saveVaultMetadata, uploadToIPFS } from "@/lib/supabase";
+import { useNotificationStore } from "@/store/useNotificationStore";
 
 /**
  * Fetch all RevenueShare PDAs that belong to a given vault.
@@ -119,6 +121,109 @@ export function useSwap() {
       }
       const platformWallet = configAccount.platformWallet;
 
+      // Handle on-chain Referral System integration
+      const [referralPDA] = getReferralPDA(publicKey);
+      let referralAccount = null;
+      try {
+        referralAccount = await program.account.referralAccount.fetch(referralPDA);
+      } catch {
+        // Referral account does not exist yet on-chain for this user
+      }
+
+      const sessionStorageReferrer = typeof window !== "undefined" ? sessionStorage.getItem("ther_referrer") : null;
+
+      if (!referralAccount && sessionStorageReferrer) {
+        try {
+          const referrerPubkey = new PublicKey(sessionStorageReferrer);
+          if (!referrerPubkey.equals(publicKey)) {
+            const [referrerReferralPDA] = getReferralPDA(referrerPubkey);
+            
+            // Fetch referrer's own referral chain to resolve L2 & L3 for our swap instruction remaining accounts
+            let referrerAccountData = null;
+            try {
+              referrerAccountData = await program.account.referralAccount.fetch(referrerReferralPDA);
+            } catch {
+              // Referrer does not have a referral chain on-chain
+            }
+
+            const registerIx = await program.methods
+              .registerReferral()
+              .accounts({
+                referralAccount: referralPDA,
+                user: publicKey,
+                referrer: referrerPubkey,
+                referrerReferralAccount: referrerReferralPDA,
+                systemProgram: SystemProgram.programId,
+              })
+              .instruction();
+
+            preInstructions.push(registerIx);
+
+            // Pass the derived referral accounts for the swap instruction
+            remainingAccounts.push({
+              pubkey: referralPDA,
+              isWritable: true,
+              isSigner: false,
+            });
+            remainingAccounts.push({
+              pubkey: referrerPubkey,
+              isWritable: true,
+              isSigner: false,
+            });
+
+            if (referrerAccountData) {
+              if (referrerAccountData.referrerL1 && !referrerAccountData.referrerL1.equals(PublicKey.default)) {
+                remainingAccounts.push({
+                  pubkey: referrerAccountData.referrerL1,
+                  isWritable: true,
+                  isSigner: false,
+                });
+              }
+              if (referrerAccountData.referrerL2 && !referrerAccountData.referrerL2.equals(PublicKey.default)) {
+                remainingAccounts.push({
+                  pubkey: referrerAccountData.referrerL2,
+                  isWritable: true,
+                  isSigner: false,
+                });
+              }
+            }
+
+            // Successfully queued registration in the transaction
+            sessionStorage.removeItem("ther_referrer");
+          }
+        } catch (err) {
+          console.warn("Ther: Failed to prepare referral registration for swap", err);
+        }
+      } else if (referralAccount) {
+        // User already has a registered referral chain, pass L1, L2, L3 keys
+        remainingAccounts.push({
+          pubkey: referralPDA,
+          isWritable: true,
+          isSigner: false,
+        });
+        if (referralAccount.referrerL1 && !referralAccount.referrerL1.equals(PublicKey.default)) {
+          remainingAccounts.push({
+            pubkey: referralAccount.referrerL1,
+            isWritable: true,
+            isSigner: false,
+          });
+        }
+        if (referralAccount.referrerL2 && !referralAccount.referrerL2.equals(PublicKey.default)) {
+          remainingAccounts.push({
+            pubkey: referralAccount.referrerL2,
+            isWritable: true,
+            isSigner: false,
+          });
+        }
+        if (referralAccount.referrerL3 && !referralAccount.referrerL3.equals(PublicKey.default)) {
+          remainingAccounts.push({
+            pubkey: referralAccount.referrerL3,
+            isWritable: true,
+            isSigner: false,
+          });
+        }
+      }
+
       const tx = await program.methods
         .swap(amount)
         .accounts({
@@ -141,6 +246,13 @@ export function useSwap() {
 
       toast.success(
         `Swapped ${args.amount.toLocaleString()} tokens! TX: ${tx.slice(0, 8)}...`,
+      );
+      useNotificationStore.getState().addNotification(
+        "swap",
+        "Tokens Swapped",
+        `Successfully swapped ${args.amount.toLocaleString()} tokens.`,
+        args.vaultPubkey,
+        tx
       );
       return tx;
     } catch (e: any) {
@@ -263,6 +375,13 @@ export function useCreateVault() {
         .rpc();
 
       toast.success(`Vault "${vaultName}" created! TX: ${tx.slice(0, 8)}...`);
+      useNotificationStore.getState().addNotification(
+        "vault_created",
+        "Vault Created",
+        `Created new vault "${vaultName}" successfully.`,
+        vaultPDA.toBase58(),
+        tx
+      );
 
       // Upload metadata and cover image to IPFS using pump.fun API
       let ipfsImageUrl = payload.image || "";
@@ -380,6 +499,13 @@ export function useRevenueShare() {
         .rpc();
 
       toast.success(`Revenue claimed! TX: ${tx.slice(0, 8)}...`);
+      useNotificationStore.getState().addNotification(
+        "claim",
+        "Revenue Claimed",
+        `Successfully claimed accumulated revenue share.`,
+        vaultPubkey,
+        tx
+      );
       return true;
     } catch (e: any) {
       console.error("Claim revenue error:", e);
@@ -490,6 +616,13 @@ export function useDepositTokens() {
         .rpc();
 
       toast.success(`Successfully deposited ${args.amount} tokens!`);
+      useNotificationStore.getState().addNotification(
+        "deposit",
+        "Tokens Deposited",
+        `Successfully deposited ${args.amount} tokens.`,
+        args.vaultPubkey,
+        tx
+      );
       return tx;
     } catch (e: any) {
       console.error("Deposit tokens error:", e);

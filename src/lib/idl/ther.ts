@@ -178,10 +178,7 @@ export type Ther = {
                 "account": "vault"
               }
             ]
-          },
-          "relations": [
-            "revenueShare"
-          ]
+          }
         },
         {
           "name": "revenueShare",
@@ -214,10 +211,7 @@ export type Ther = {
         {
           "name": "recipient",
           "writable": true,
-          "signer": true,
-          "relations": [
-            "revenueShare"
-          ]
+          "signer": true
         },
         {
           "name": "systemProgram",
@@ -577,6 +571,68 @@ export type Ther = {
       "args": []
     },
     {
+      "name": "registerReferral",
+      "docs": [
+        "Register a referral mapping on-chain."
+      ],
+      "discriminator": [
+        158,
+        196,
+        134,
+        102,
+        193,
+        102,
+        184,
+        86
+      ],
+      "accounts": [
+        {
+          "name": "referralAccount",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  102,
+                  101,
+                  114,
+                  114,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "referrer"
+        },
+        {
+          "name": "referrerReferralAccount",
+          "docs": [
+            "We check the owner and manually deserialize it if it's initialized to extract L2 & L3 referrers."
+          ]
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "renounceVault",
       "docs": [
         "Permanently renounce a vault — locks tokens forever."
@@ -815,6 +871,9 @@ export type Ther = {
       "accounts": [
         {
           "name": "platformConfig",
+          "docs": [
+            "Seeds are validated by the constraint."
+          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -836,10 +895,12 @@ export type Ther = {
         },
         {
           "name": "authority",
-          "signer": true,
-          "relations": [
-            "platformConfig"
-          ]
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
         }
       ],
       "args": [
@@ -865,6 +926,22 @@ export type Ther = {
         },
         {
           "name": "minimumDepositBps",
+          "type": "u16"
+        },
+        {
+          "name": "referralFee",
+          "type": "u64"
+        },
+        {
+          "name": "referralL1Bps",
+          "type": "u16"
+        },
+        {
+          "name": "referralL2Bps",
+          "type": "u16"
+        },
+        {
+          "name": "referralL3Bps",
           "type": "u16"
         }
       ]
@@ -987,6 +1064,19 @@ export type Ther = {
       ]
     },
     {
+      "name": "referralAccount",
+      "discriminator": [
+        237,
+        162,
+        80,
+        78,
+        196,
+        233,
+        91,
+        2
+      ]
+    },
+    {
       "name": "revenueShare",
       "discriminator": [
         55,
@@ -1101,43 +1191,68 @@ export type Ther = {
     },
     {
       "code": 6017,
-      "name": "alreadyRenounced",
-      "msg": "Vault is already renounced"
+      "name": "withdrawalsLocked",
+      "msg": "Withdrawals are currently locked"
     },
     {
       "code": 6018,
+      "name": "invalidAccountData",
+      "msg": "Invalid account data length"
+    },
+    {
+      "code": 6019,
+      "name": "alreadyRenounced",
+      "msg": "Already renounced"
+    },
+    {
+      "code": 6020,
       "name": "unauthorizedAuthority",
       "msg": "Unauthorized platform authority"
     },
     {
-      "code": 6019,
+      "code": 6021,
       "name": "insufficientDepositAmount",
       "msg": "Token deposit must be at least 1% of total supply"
     },
     {
-      "code": 6020,
+      "code": 6022,
       "name": "arithmeticOverflow",
       "msg": "Arithmetic overflow"
     },
     {
-      "code": 6021,
+      "code": 6023,
       "name": "invalidRemainingAccounts",
       "msg": "Invalid remaining accounts length"
     },
     {
-      "code": 6022,
+      "code": 6024,
       "name": "invalidVaultTokenAccount",
       "msg": "Invalid vault token account"
     },
     {
-      "code": 6023,
+      "code": 6025,
       "name": "vaultNameTooLong",
       "msg": "Vault name too long"
     },
     {
-      "code": 6024,
+      "code": 6026,
       "name": "depositAmountsMismatch",
       "msg": "Deposit amounts length mismatch"
+    },
+    {
+      "code": 6027,
+      "name": "cannotReferSelf",
+      "msg": "Cannot refer yourself"
+    },
+    {
+      "code": 6028,
+      "name": "referralAlreadyRegistered",
+      "msg": "Referral already registered for this user"
+    },
+    {
+      "code": 6029,
+      "name": "invalidReferralAccount",
+      "msg": "Invalid referral account"
     }
   ],
   "types": [
@@ -1177,7 +1292,7 @@ export type Ther = {
           {
             "name": "platformWallet",
             "docs": [
-              "Receives 0.005 SOL per swap and 0.05 SOL per vault creation"
+              "Receives fees per swap/creation"
             ],
             "type": "pubkey"
           },
@@ -1198,7 +1313,7 @@ export type Ther = {
           {
             "name": "platformFee",
             "docs": [
-              "Platform portion of swap fee in lamports (default: 5_000_000 = 0.005 SOL)"
+              "Platform portion of swap fee in lamports (default: 4_000_000 = 0.004 SOL)"
             ],
             "type": "u64"
           },
@@ -1215,6 +1330,95 @@ export type Ther = {
               "Minimum deposit basis points per token (default: 100 = 1% of total supply)"
             ],
             "type": "u16"
+          },
+          {
+            "name": "referralFee",
+            "docs": [
+              "Referral fee portion in lamports (default: 1_000_000 = 0.001 SOL)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "referralL1Bps",
+            "docs": [
+              "Referral Level 1 split basis points (default: 5000 = 50%)"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "referralL2Bps",
+            "docs": [
+              "Referral Level 2 split basis points (default: 3000 = 30%)"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "referralL3Bps",
+            "docs": [
+              "Referral Level 3 split basis points (default: 2000 = 20%)"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "PDA bump seed"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "referralAccount",
+      "docs": [
+        "Stores the referral chain (L1, L2, L3) for a given user.",
+        "PDA seeds: [b\"referral\", user.key().as_ref()]"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "user",
+            "docs": [
+              "The referred user"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "referrerL1",
+            "docs": [
+              "Direct referrer (Level 1)"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "referrerL2",
+            "docs": [
+              "Referrer's referrer (Level 2) — Pubkey::default() if none"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "referrerL3",
+            "docs": [
+              "Level 3 referrer — Pubkey::default() if none"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "totalSwaps",
+            "docs": [
+              "Total swaps this user has performed"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "createdAt",
+            "docs": [
+              "Registration timestamp"
+            ],
+            "type": "i64"
           },
           {
             "name": "bump",

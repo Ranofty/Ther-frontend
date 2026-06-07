@@ -3,7 +3,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ImageIcon, Tag, FileText, AtSign, Globe, Plus, Trash2, Clock, ShieldCheck,
-  CheckCircle2, XCircle, AlertTriangle, PieChart as PieIcon, Wallet, Coins, ChevronRight, Send,
+  CheckCircle2, XCircle, AlertTriangle, PieChart as PieIcon, Wallet, Coins, ChevronRight, Send, Loader2,
 } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 import { useWallet } from "@solana/wallet-adapter-react";
@@ -16,6 +16,15 @@ import { PublicKey } from "@solana/web3.js";
 import { getMint } from "@solana/spl-token";
 import { connection } from "@/lib/solana";
 import { toast } from "sonner";
+
+// Launchpad Imports
+import { TokenSourceToggle } from "@/components/create/TokenSourceToggle";
+import { LaunchpadSelector } from "@/components/create/LaunchpadSelector";
+import { TokenLaunchForm } from "@/components/create/TokenLaunchForm";
+import { LaunchProgress, type LaunchStep, type LaunchResultEntry } from "@/components/create/LaunchProgress";
+import { getLaunchpad, LAUNCHPADS } from "@/lib/launchpads";
+import { uploadMetadataToIPFS } from "@/lib/launchpads/pumpportal";
+import type { LaunchpadId } from "@/lib/launchpads/types";
 
 export const Route = createFileRoute("/create")({
   head: () => ({
@@ -47,12 +56,13 @@ const PIE_COLORS = ["var(--accent)", "var(--accent-2)", "var(--green)", "#8B5CF6
 
 function CreatePage() {
   const navigate = useNavigate();
-  const { publicKey } = useWallet();
+  const wallet = useWallet();
+  const { publicKey } = wallet;
   const { createVault, loading } = useCreateVault();
   const { config: platformConfig } = usePlatformConfig();
   const [step, setStep] = useState(0);
 
-  // Step 1
+  // Step 0
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [image, setImage] = useState<string>("");
@@ -61,9 +71,33 @@ function CreatePage() {
   const [telegram, setTelegram] = useState("");
   const [coverFile, setCoverFile] = useState<File | null>(null);
 
-  // Step 2
+  // Step 1
   const [tokens, setTokens] = useState<TokenDraft[]>([]);
   const [mintInput, setMintInput] = useState("");
+  const [tokenSourceMode, setTokenSourceMode] = useState<"existing" | "launch">("existing");
+  const [selectedLaunchpads, setSelectedLaunchpads] = useState<Set<LaunchpadId>>(() => new Set());
+  // HMR recovery: if stale state from old code persists as null, reset to empty Set
+  const safeSelectedLaunchpads = selectedLaunchpads instanceof Set ? selectedLaunchpads : new Set<LaunchpadId>();
+
+  // New launch token form state
+  const [launchName, setLaunchName] = useState("");
+  const [launchSymbol, setLaunchSymbol] = useState("");
+  const [launchDesc, setLaunchDesc] = useState("");
+  const [launchImageFile, setLaunchImageFile] = useState<File | null>(null);
+  const [launchImagePreview, setLaunchImagePreview] = useState("");
+  const [launchTwitter, setLaunchTwitter] = useState("");
+  const [launchTelegram, setLaunchTelegram] = useState("");
+  const [launchWebsite, setLaunchWebsite] = useState("");
+  const [launchDevBuy, setLaunchDevBuy] = useState(0.1);
+  const [launchSlippage, setLaunchSlippage] = useState(2);
+  const [launchPriorityFee, setLaunchPriorityFee] = useState(0.003);
+
+  // Launching execution state
+  const [launching, setLaunching] = useState(false);
+  const [launchProgressSteps, setLaunchProgressSteps] = useState<LaunchStep[]>([]);
+  const [launchError, setLaunchError] = useState<string | undefined>(undefined);
+  const [launchResult, setLaunchResult] = useState<{ mintAddress: string; txSignatures: string[] } | undefined>(undefined);
+  const [launchResults, setLaunchResults] = useState<LaunchResultEntry[]>([]);
 
   // Step 3
   const [lockType, setLockType] = useState<"timed" | "permanent">("timed");
@@ -131,6 +165,215 @@ function CreatePage() {
     } finally {
       toast.dismiss(loadingToast);
       setVerifying(false);
+    }
+  }
+
+  async function launchToken() {
+    if (safeSelectedLaunchpads.size === 0) {
+      toast.error("Please select at least one launchpad");
+      return;
+    }
+    if (!launchName || !launchSymbol || !launchDesc || !launchImageFile) {
+      toast.error("Please fill in all required fields (logo, name, ticker, description)");
+      return;
+    }
+    if (!wallet.publicKey || !wallet.signAllTransactions) {
+      toast.error("Please connect your wallet first");
+      return;
+    }
+
+    const platformIds = Array.from(safeSelectedLaunchpads);
+    const adapters = platformIds.map((id) => getLaunchpad(id)).filter(Boolean);
+    if (adapters.length === 0) {
+      toast.error("No valid launchpad adapters found");
+      return;
+    }
+
+    setLaunching(true);
+    setLaunchError(undefined);
+    setLaunchResult(undefined);
+    setLaunchResults([]);
+
+    // Build step list: shared IPFS upload + per-platform steps
+    const steps: LaunchStep[] = [
+      { label: "Uploading Metadata to IPFS", status: "active" },
+    ];
+    for (const adapter of adapters) {
+      steps.push(
+        { label: "Generating Mint Keypair", status: "pending", platformId: adapter!.id, platformName: adapter!.name },
+        { label: "Signing Transactions", status: "pending", platformId: adapter!.id, platformName: adapter!.name },
+        { label: "Submitting to Network", status: "pending", platformId: adapter!.id, platformName: adapter!.name },
+      );
+    }
+    setLaunchProgressSteps([...steps]);
+
+    try {
+      // 1. Upload metadata to IPFS ONCE (shared across all platforms)
+      const { metadataUri } = await uploadMetadataToIPFS({
+        name: launchName,
+        symbol: launchSymbol,
+        description: launchDesc,
+        imageFile: launchImageFile,
+        twitter: launchTwitter || undefined,
+        telegram: launchTelegram || undefined,
+        website: launchWebsite || undefined,
+      });
+
+      // Mark IPFS step as done
+      setLaunchProgressSteps((prev) => {
+        const next = [...prev];
+        next[0].status = "done";
+        return next;
+      });
+
+      const collectedResults: LaunchResultEntry[] = [];
+
+      // 2. Launch on each platform sequentially
+      for (let pIdx = 0; pIdx < adapters.length; pIdx++) {
+        const adapter = adapters[pIdx]!;
+        const baseStepIdx = 1 + pIdx * 3; // offset past the shared IPFS step
+
+        // Mark "Generating Mint Keypair" as active
+        setLaunchProgressSteps((prev) => {
+          const next = [...prev];
+          next[baseStepIdx].status = "active";
+          return next;
+        });
+
+        const config = {
+          metadata: {
+            name: launchName,
+            symbol: launchSymbol,
+            description: launchDesc,
+            imageFile: launchImageFile,
+            twitter: launchTwitter || undefined,
+            telegram: launchTelegram || undefined,
+            website: launchWebsite || undefined,
+          },
+          devBuySOL: launchDevBuy,
+          slippage: launchSlippage,
+          priorityFee: launchPriorityFee,
+          metadataUri, // reuse the shared upload
+        };
+
+        const signWrapper = async (txs: any[]) => {
+          setLaunchProgressSteps((prev) => {
+            const next = [...prev];
+            next[baseStepIdx].status = "done";
+            next[baseStepIdx + 1].status = "active";
+            return next;
+          });
+
+          const signed = await wallet.signAllTransactions!(txs);
+
+          setLaunchProgressSteps((prev) => {
+            const next = [...prev];
+            next[baseStepIdx + 1].status = "done";
+            next[baseStepIdx + 2].status = "active";
+            return next;
+          });
+          return signed;
+        };
+
+        try {
+          const result = await adapter.launch(
+            config,
+            wallet.publicKey.toBase58(),
+            signWrapper
+          );
+
+          // Mark final step as done
+          setLaunchProgressSteps((prev) => {
+            const next = [...prev];
+            next[baseStepIdx + 2].status = "done";
+            return next;
+          });
+
+          collectedResults.push({
+            mintAddress: result.mintAddress,
+            txSignatures: result.txSignatures,
+            platformId: adapter.id,
+            platformName: adapter.name,
+          });
+
+          // Add token to vault list
+          try {
+            const mintPubkey = new PublicKey(result.mintAddress);
+            const mintInfo = await getMint(connection, mintPubkey);
+            const decimals = mintInfo.decimals;
+            const rawSupply = Number(mintInfo.supply);
+            const supply = rawSupply / Math.pow(10, decimals);
+            const mint_revoked = mintInfo.mintAuthority === null;
+            const freeze_revoked = mintInfo.freezeAuthority === null;
+
+            setTokens((tk) => [
+              ...tk,
+              {
+                mint: result.mintAddress,
+                symbol: launchSymbol,
+                name: launchName,
+                supply,
+                decimals,
+                deposit: 0,
+                mint_revoked,
+                freeze_revoked,
+              },
+            ]);
+          } catch (mintErr) {
+            console.warn("Could not fetch mint info for", result.mintAddress, mintErr);
+          }
+
+          toast.success(`Launched on ${adapter.name}!`);
+        } catch (platformErr: any) {
+          console.error(`Launch failed on ${adapter.name}:`, platformErr);
+          setLaunchProgressSteps((prev) => {
+            const next = [...prev];
+            const activeIdx = [baseStepIdx, baseStepIdx + 1, baseStepIdx + 2].find(
+              (i) => next[i].status === "active" || next[i].status === "pending"
+            );
+            if (activeIdx !== undefined) next[activeIdx].status = "error";
+            return next;
+          });
+          toast.error(`Failed on ${adapter.name}: ${platformErr.message}`);
+          // Continue with remaining platforms
+        }
+      }
+
+      setLaunchResults(collectedResults);
+      if (collectedResults.length > 0) {
+        setLaunchResult(collectedResults[0]);
+      }
+
+      if (collectedResults.length === adapters.length) {
+        toast.success(`Token launched on all ${adapters.length} platforms!`);
+      } else if (collectedResults.length > 0) {
+        toast.success(`Token launched on ${collectedResults.length}/${adapters.length} platforms`);
+      }
+
+      // Reset form
+      setLaunchName("");
+      setLaunchSymbol("");
+      setLaunchDesc("");
+      setLaunchImageFile(null);
+      setLaunchImagePreview("");
+      setLaunchTwitter("");
+      setLaunchTelegram("");
+      setLaunchWebsite("");
+      setLaunchDevBuy(0.1);
+    } catch (err: any) {
+      console.error("Token launch error:", err);
+      setLaunchError(err.message || "An unknown error occurred during launch");
+      setLaunchProgressSteps((prev) => {
+        const next = [...prev];
+        const activeIdx = next.findIndex((s) => s.status === "active" || s.status === "pending");
+        if (activeIdx !== -1) {
+          next[activeIdx].status = "error";
+        }
+        return next;
+      });
+      toast.error("Failed to launch token");
+    } finally {
+      setLaunching(false);
     }
   }
 
@@ -269,102 +512,220 @@ function CreatePage() {
 
           {step === 1 && (
             <div className="flex flex-col gap-4">
-              <Section icon={<Plus size={14} />} label="Add Token by Mint">
-                <div className="flex gap-2">
-                  <input
-                    value={mintInput}
-                    onChange={(e) => setMintInput(e.target.value)}
-                    placeholder="Token mint address"
-                    className="flex-1 bg-[var(--surface-2)] rounded-xl px-4 py-3 font-mono text-sm outline-none"
-                  />
-                  <button
-                    type="button"
-                    disabled={verifying}
-                    onClick={addToken}
-                    className="px-4 py-3 rounded-xl bg-[var(--accent)] text-black font-bold font-display text-sm disabled:opacity-50"
-                  >
-                    {verifying ? "Adding..." : "Add"}
-                  </button>
-                </div>
-              </Section>
+              <TokenSourceToggle
+                mode={tokenSourceMode}
+                onModeChange={(m) => {
+                  setTokenSourceMode(m);
+                  setLaunchError(undefined);
+                  setLaunchResult(undefined);
+                }}
+                disabled={launching}
+              />
 
-              {tokens.map((t, idx) => {
-                const okBoth = t.mint_revoked && t.freeze_revoked;
-                const minDeposit = Math.floor(t.supply * 0.01);
-                const belowMin = t.deposit > 0 && t.deposit < minDeposit;
-                return (
-                  <div
-                    key={idx}
-                    className="bg-[var(--surface)] backdrop-blur-2xl rounded-2xl p-4"
-                  >
-                    <div className="flex items-center gap-3 mb-3">
-                      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[var(--accent)] to-[var(--accent-2)] flex items-center justify-center text-[10px] font-mono font-bold text-black">
-                        {t.symbol.slice(0, 3)}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="font-display font-medium truncate">{t.name}</div>
-                        <div className="font-mono text-xs text-[var(--accent)]">{t.symbol}</div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setTokens((tk) => tk.filter((_, i) => i !== idx))}
-                        className="text-[var(--text-muted)] hover:text-[var(--red)]"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                    <SafetyRow label="Mint Authority" ok={t.mint_revoked} />
-                    <SafetyRow label="Freeze Authority" ok={t.freeze_revoked} />
-                    {!okBoth && (
-                      <div className="flex items-center gap-2 mt-2 text-xs font-mono text-[var(--red)]">
-                        <XCircle size={12} />
-                        Token cannot be added — revoke this authority first
-                      </div>
-                    )}
-                    <div className="flex items-center justify-between mt-3 text-xs font-mono">
-                      <span className="text-[var(--text-muted)]">
-                        Supply: {t.supply.toLocaleString()}
-                      </span>
-                      <span className="text-[var(--accent)]">
-                        Min deposit (1%): {minDeposit.toLocaleString()}
-                      </span>
-                    </div>
+              {tokenSourceMode === "existing" ? (
+                <Section icon={<Plus size={14} />} label="Add Token by Mint">
+                  <div className="flex gap-2">
                     <input
-                      type="number"
-                      disabled={!okBoth}
-                      value={t.deposit || ""}
-                      onChange={(e) =>
-                        setTokens((tk) =>
-                          tk.map((x, i) =>
-                            i === idx ? { ...x, deposit: Number(e.target.value) } : x,
-                          ),
-                        )
-                      }
-                      placeholder="Deposit amount"
-                      className={`w-full mt-2 bg-[var(--surface-2)] rounded-xl px-4 py-3 font-mono text-lg outline-none border-2 transition-colors ${
-                        belowMin
-                          ? "border-[var(--red)]"
-                          : t.deposit >= minDeposit
-                            ? "border-[var(--green)]"
-                            : "border-transparent"
-                      }`}
+                      value={mintInput}
+                      onChange={(e) => setMintInput(e.target.value)}
+                      placeholder="Token mint address"
+                      className="flex-1 bg-[var(--surface-2)] rounded-xl px-4 py-3 font-mono text-sm outline-none"
                     />
-                    {belowMin && (
-                      <div className="flex items-center gap-1 mt-1 text-[10px] font-mono text-[var(--red)]">
-                        <AlertTriangle size={10} /> Below 5% minimum
-                      </div>
-                    )}
+                    <button
+                      type="button"
+                      disabled={verifying}
+                      onClick={addToken}
+                      className="px-4 py-3 rounded-xl bg-[var(--accent)] text-black font-bold font-display text-sm disabled:opacity-50"
+                    >
+                      {verifying ? "Adding..." : "Add"}
+                    </button>
                   </div>
-                );
-              })}
+                </Section>
+              ) : (
+                <div className="flex flex-col gap-4">
+                  <Section icon={<Plus size={14} />} label="Select Launchpads">
+                    <LaunchpadSelector
+                      selected={safeSelectedLaunchpads}
+                      onToggle={(id) => {
+                        setSelectedLaunchpads((prev) => {
+                          const safePrev = prev instanceof Set ? prev : new Set<LaunchpadId>();
+                          const next = new Set(safePrev);
+                          if (next.has(id)) {
+                            next.delete(id);
+                          } else {
+                            next.add(id);
+                          }
+                          return next;
+                        });
+                        setLaunchError(undefined);
+                        setLaunchResult(undefined);
+                        setLaunchResults([]);
+                      }}
+                      onSelectAll={() => {
+                        setSelectedLaunchpads((prev) => {
+                          const safePrev = prev instanceof Set ? prev : new Set<LaunchpadId>();
+                          const allIds: LaunchpadId[] = ["pumpfun", "bonkfun", "bagsfm"];
+                          if (safePrev.size === allIds.length) {
+                            return new Set();
+                          }
+                          return new Set(allIds);
+                        });
+                        setLaunchError(undefined);
+                        setLaunchResult(undefined);
+                        setLaunchResults([]);
+                      }}
+                      disabled={launching}
+                    />
+                  </Section>
 
-              <button
-                type="button"
-                onClick={addToken}
-                className="w-full py-3 rounded-2xl border-2 border-dashed border-[var(--text)]/20 hover:border-[var(--accent)]/50 flex items-center justify-center gap-2 transition-colors font-display text-[var(--text-muted)] text-sm"
-              >
-                <Plus size={14} /> Add Another Token
-              </button>
+                  {safeSelectedLaunchpads.size > 0 && (
+                    <div className="flex flex-col gap-4">
+                      <TokenLaunchForm
+                        name={launchName}
+                        onNameChange={setLaunchName}
+                        symbol={launchSymbol}
+                        onSymbolChange={setLaunchSymbol}
+                        description={launchDesc}
+                        onDescriptionChange={setLaunchDesc}
+                        imageFile={launchImageFile}
+                        imagePreview={launchImagePreview}
+                        onImageChange={(file) => {
+                          setLaunchImageFile(file);
+                          setLaunchImagePreview(URL.createObjectURL(file));
+                        }}
+                        onImageClear={() => {
+                          setLaunchImageFile(null);
+                          setLaunchImagePreview("");
+                        }}
+                        twitter={launchTwitter}
+                        onTwitterChange={setLaunchTwitter}
+                        telegram={launchTelegram}
+                        onTelegramChange={setLaunchTelegram}
+                        website={launchWebsite}
+                        onWebsiteChange={setLaunchWebsite}
+                        devBuySOL={launchDevBuy}
+                        onDevBuyChange={setLaunchDevBuy}
+                        disabled={launching}
+                      />
+
+                      {(launching || launchError || launchResults.length > 0) && (
+                        <LaunchProgress
+                          steps={launchProgressSteps}
+                          error={launchError}
+                          results={launchResults}
+                        />
+                      )}
+
+                      {launchResults.length === 0 && (
+                        <button
+                          type="button"
+                          disabled={launching || !launchName || !launchSymbol || !launchDesc || !launchImageFile}
+                          onClick={launchToken}
+                          className="w-full py-4 rounded-xl font-display font-bold text-black text-sm bg-[var(--accent)] shadow-[0_4px_16px_rgba(0,229,255,0.2)] hover:shadow-[0_8px_24px_rgba(0,229,255,0.3)] transition-all disabled:opacity-40 flex items-center justify-center gap-2 cursor-pointer"
+                        >
+                          {launching ? (
+                            <>
+                              <Loader2 size={16} className="animate-spin" /> Launching on {safeSelectedLaunchpads.size} platform{safeSelectedLaunchpads.size > 1 ? "s" : ""}...
+                            </>
+                          ) : (
+                            safeSelectedLaunchpads.size > 1
+                              ? `Launch on ${safeSelectedLaunchpads.size} Platforms & Add to Vault`
+                              : "Launch Token & Add to Vault"
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {tokens.length > 0 && (
+                <div className="flex flex-col gap-4 mt-2">
+                  <div className="text-xs font-mono text-[var(--text-muted)] uppercase tracking-wider">
+                    Added Tokens ({tokens.length})
+                  </div>
+                  
+                  {tokens.map((t, idx) => {
+                    const okBoth = t.mint_revoked && t.freeze_revoked;
+                    const minDeposit = Math.floor(t.supply * 0.01);
+                    const belowMin = t.deposit > 0 && t.deposit < minDeposit;
+                    return (
+                      <div
+                        key={idx}
+                        className="bg-[var(--surface)] backdrop-blur-2xl rounded-2xl p-4 border border-[var(--text)]/5"
+                      >
+                        <div className="flex items-center gap-3 mb-3">
+                          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[var(--accent)] to-[var(--accent-2)] flex items-center justify-center text-[10px] font-mono font-bold text-black">
+                            {t.symbol.slice(0, 3)}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="font-display font-medium truncate">{t.name}</div>
+                            <div className="font-mono text-xs text-[var(--accent)]">{t.symbol}</div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setTokens((tk) => tk.filter((_, i) => i !== idx))}
+                            className="text-[var(--text-muted)] hover:text-[var(--red)] cursor-pointer"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                        <SafetyRow label="Mint Authority" ok={t.mint_revoked} />
+                        <SafetyRow label="Freeze Authority" ok={t.freeze_revoked} />
+                        {!okBoth && (
+                          <div className="flex items-center gap-2 mt-2 text-xs font-mono text-[var(--red)]">
+                            <XCircle size={12} />
+                            Token cannot be added — revoke this authority first
+                          </div>
+                        )}
+                        <div className="flex items-center justify-between mt-3 text-xs font-mono">
+                          <span className="text-[var(--text-muted)]">
+                            Supply: {t.supply.toLocaleString()}
+                          </span>
+                          <span className="text-[var(--accent)]">
+                            Min deposit (1%): {minDeposit.toLocaleString()}
+                          </span>
+                        </div>
+                        <input
+                          type="number"
+                          disabled={!okBoth}
+                          value={t.deposit || ""}
+                          onChange={(e) =>
+                            setTokens((tk) =>
+                              tk.map((x, i) =>
+                                i === idx ? { ...x, deposit: Number(e.target.value) } : x,
+                              ),
+                            )
+                          }
+                          placeholder="Deposit amount"
+                          className={`w-full mt-2 bg-[var(--surface-2)] rounded-xl px-4 py-3 font-mono text-lg outline-none border-2 transition-colors ${
+                            belowMin
+                              ? "border-[var(--red)]"
+                              : t.deposit >= minDeposit
+                                ? "border-[var(--green)]"
+                                : "border-transparent"
+                          }`}
+                        />
+                        {belowMin && (
+                          <div className="flex items-center gap-1 mt-1 text-[10px] font-mono text-[var(--red)]">
+                            <AlertTriangle size={10} /> Below 1% minimum
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {tokenSourceMode === "existing" && (
+                <button
+                  type="button"
+                  onClick={addToken}
+                  className="w-full py-3 rounded-2xl border-2 border-dashed border-[var(--text)]/20 hover:border-[var(--accent)]/50 flex items-center justify-center gap-2 transition-colors font-display text-[var(--text-muted)] text-sm cursor-pointer"
+                >
+                  <Plus size={14} /> Add Another Token
+                </button>
+              )}
 
               {tokens.length >= 2 &&
                 new Set(tokens.map((t) => t.deposit)).size > 1 &&

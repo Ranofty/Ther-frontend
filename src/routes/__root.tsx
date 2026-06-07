@@ -20,6 +20,7 @@ import { WalletContextProvider } from "@/components/layout/WalletContextProvider
 import { Header } from "@/components/layout/Header";
 import { TickerStrip } from "@/components/layout/TickerStrip";
 import { ClientOnly } from "@/components/layout/ClientOnly";
+import { useReferralCapture } from "@/hooks/useReferral";
 
 function NotFoundComponent() {
   return (
@@ -131,6 +132,7 @@ function RootShell({ children }: { children: React.ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  useReferralCapture();
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>

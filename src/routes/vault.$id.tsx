@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useEffect } from "react";
 import { useVaultDetail } from "@/hooks/useVaults";
 import { VaultHeader } from "@/components/vault/VaultHeader";
 import { TokenBalanceTable } from "@/components/vault/TokenBalanceTable";
@@ -9,6 +10,7 @@ import { RevenueShareCard } from "@/components/vault/RevenueShareCard";
 import { CreatorPanel } from "@/components/vault/CreatorPanel";
 import { DepositSection } from "@/components/vault/DepositSection";
 import { CommentsSection } from "@/components/vault/CommentsSection";
+import { ReferralCard } from "@/components/vault/ReferralCard";
 
 export const Route = createFileRoute("/vault/$id")({
   head: ({ params }) => ({
@@ -23,6 +25,37 @@ export const Route = createFileRoute("/vault/$id")({
 function VaultDetailPage() {
   const { id } = Route.useParams();
   const { vault, swaps, refetch, addLocalSwap } = useVaultDetail(id);
+
+  useEffect(() => {
+    if (vault) {
+      document.title = `${vault.name} — Ther Vault`;
+      
+      const updateMeta = (property: string, content: string) => {
+        let element = document.querySelector(`meta[property="${property}"]`) || 
+                      document.querySelector(`meta[name="${property}"]`);
+        if (!element) {
+          element = document.createElement("meta");
+          if (property.startsWith("og:") || property.startsWith("twitter:")) {
+            element.setAttribute("property", property);
+          } else {
+            element.setAttribute("name", property);
+          }
+          document.head.appendChild(element);
+        }
+        element.setAttribute("content", content);
+      };
+
+      const description = vault.description || `Inspect the ${vault.name} token vault on Ther.`;
+      updateMeta("description", description);
+      updateMeta("og:title", `${vault.name} — Ther Vault`);
+      updateMeta("og:description", description);
+      updateMeta("og:image", vault.image_url);
+      updateMeta("twitter:card", "summary_large_image");
+      updateMeta("twitter:title", `${vault.name} — Ther Vault`);
+      updateMeta("twitter:description", description);
+      updateMeta("twitter:image", vault.image_url);
+    }
+  }, [vault]);
 
   if (!vault) {
     return (
@@ -62,6 +95,7 @@ function VaultDetailPage() {
           <CreatorPanel vault={vault} onRefresh={refetch} />
           <LockStatusCard vault={vault} />
           <RevenueShareCard vault={vault} onRefresh={refetch} />
+          <ReferralCard vault={vault} />
         </div>
       </div>
     </main>
